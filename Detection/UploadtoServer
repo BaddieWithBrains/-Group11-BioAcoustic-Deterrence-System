@@ -1,0 +1,69 @@
+from flask import Flask, request, jsonify
+from flask_cors import CORS
+from datetime import datetime
+from ultralytics import YOLO
+from PIL import Image
+import socket
+import io
+import os
+
+app = Flask(__name__)
+CORS(app)
+
+UPLOAD_FOLDER = "uploads"
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+
+# Load YOLO model
+MODEL_PATH = "best.pt" # Replace with your model file
+model = YOLO(MODEL_PATH)
+
+@app.route('/upload', methods=['POST'])
+def receive_image():
+    try:
+        if request.content_type != "image/jpeg":
+            return jsonify({'error': 'Invalid content type'}), 400
+
+        # Save image with timestamped name
+        image_data = request.data
+        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        image_filename = f"{datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg"
+        image_path = os.path.join(UPLOAD_FOLDER, image_filename)
+
+        with open(image_path, 'wb') as f:
+            f.write(image_data)
+
+        # Load image and run YOLO model
+        image = Image.open(io.BytesIO(image_data))
+        results = model(image)
+
+        # Do the detection
+        detections = []
+        names = results[0].names
+        for box in results[0].boxes:
+            cls_id = int(box.cls[0])
+            animal = names[cls_id]
+            confidence = float(box.conf[0])
+            detections.append({
+                "animal_name": animal,
+                "confidence": round(confidence, 2),
+                "timestamp": timestamp,
+                "image_url": image_path  
+            })
+
+        return jsonify(detections)
+
+    except Exception as e:
+        print("Upload Error:", e)
+        return jsonify({'error': str(e)}), 500
+
+if __name__ == '__main__':
+    # Get local IP address to run server
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(('8.8.8.8', 80))
+        local_ip = s.getsockname()[0]
+        s.close()
+    except Exception:
+        local_ip = '127.0.0.1'
+
+    app.run(host=local_ip, port=5000, debug=True)
